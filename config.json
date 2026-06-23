@@ -1,0 +1,10 @@
+{
+    "camera_index": 0,
+    "confidence_threshold": 0.17,
+    "model_path": "models\\best.pt",
+    "skip_frames": 4,
+    "infer_imgsz": 640,
+    "result_dir": "results",
+    "arduino_enabled": false,
+    "arduino_port": ""
+}
