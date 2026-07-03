@@ -319,17 +319,32 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkButton(result_row, text="Browse…", width=72,
                       command=self._browse_result_dir).pack(side="left", padx=6)
 
+        # ── Tốc độ ô xám (số frame cần để chốt OK/NG) ──────────────────────
+        ctk.CTkLabel(form, text="Độ trễ xác nhận:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
+        self._confirm_frames_var = ctk.IntVar(value=self._config.get("confirm_frames", 6))
+        confirm_row = ctk.CTkFrame(form, fg_color="transparent")
+        confirm_row.grid(row=6, column=1, padx=10, sticky="ew")
+        ctk.CTkSlider(confirm_row, from_=2, to=30, number_of_steps=28,
+                      variable=self._confirm_frames_var, width=160).pack(side="left")
+        self._confirm_frames_disp = ctk.CTkLabel(confirm_row, text=str(self._confirm_frames_var.get()), width=28)
+        self._confirm_frames_disp.pack(side="left", padx=6)
+        self._confirm_frames_var.trace_add("write", lambda *_: self._confirm_frames_disp.configure(
+            text=str(self._confirm_frames_var.get())))
+        ctk.CTkLabel(form, text="(số lớn = ô xám giữ lâu hơn, QR phải đi qua\nvùng scan lâu hơn mới chốt OK/NG)",
+                     text_color="#666666", font=("Arial", 10), justify="left").grid(
+            row=7, column=1, padx=10, sticky="w")
+
         # ── Arduino ──────────────────────────────────────────────────────────
         ctk.CTkLabel(form, text="Arduino:", font=("Arial", 12, "bold")).grid(
-            row=6, column=0, padx=10, pady=(20, 4), sticky="w")
+            row=8, column=0, padx=10, pady=(20, 4), sticky="w")
         self._arduino_enabled_var = ctk.BooleanVar(value=self._config.get("arduino_enabled", True))
         ctk.CTkCheckBox(form, text="Bật điều khiển motor (gửi lệnh khi NG)",
                         variable=self._arduino_enabled_var).grid(
-            row=6, column=1, padx=10, pady=(20, 4), sticky="w")
+            row=8, column=1, padx=10, pady=(20, 4), sticky="w")
 
-        ctk.CTkLabel(form, text="Cổng COM:").grid(row=7, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(form, text="Cổng COM:").grid(row=9, column=0, padx=10, pady=10, sticky="w")
         arduino_row = ctk.CTkFrame(form, fg_color="transparent")
-        arduino_row.grid(row=7, column=1, padx=10, sticky="ew")
+        arduino_row.grid(row=9, column=1, padx=10, sticky="ew")
 
         AUTO_LABEL = "Tự động dò"
         saved_port = self._config.get("arduino_port", "")
@@ -349,7 +364,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(form, text="(\"Tự động dò\" = nhận diện theo VID/PID; bấm ⟳ để quét lại cổng)",
                      text_color="#666666", font=("Arial", 10)).grid(
-            row=8, column=1, padx=10, sticky="w")
+            row=10, column=1, padx=10, sticky="w")
 
         self._refresh_ports(keep_selection=True)
 
@@ -408,6 +423,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self._config["infer_imgsz"] = int(self._imgsz_var.get())
         self._config["model_path"] = self._model_var.get()
         self._config["result_dir"] = self._result_dir_var.get()
+        self._config["confirm_frames"] = int(self._confirm_frames_var.get())
         self._config["arduino_enabled"] = self._arduino_enabled_var.get()
         selected_port = self._arduino_port_var.get()
         self._config["arduino_port"] = "" if selected_port == "Tự động dò" else selected_port
@@ -444,7 +460,7 @@ class MainApp(ctk.CTk):
         # Tracker v3: IoU matching + mature-zone guard
         self._tracker = QRTracker(
             max_misses=15,
-            min_hits_to_finalize_ng=6,
+            min_hits_to_finalize_ng=self._config.get("confirm_frames", 6),
             on_finalize=self._on_item_finalized,
         )
         # Cache track đã confirmed OK → tránh NG flash do 1 frame mờ
@@ -452,6 +468,13 @@ class MainApp(ctk.CTk):
         # Set track_id đã gửi lệnh NG xuống Arduino (tránh gửi lặp lại nhiều lần
         # cho cùng 1 QR trong khi nó vẫn còn trong khung hình)
         self._ng_triggered: set = set()
+        # ── Khoá "còn tem NG" ────────────────────────────────────────────────
+        # motor_locked=True nghĩa là đã có ít nhất 1 lần NG chưa được CLEAR.
+        # Chỉ khi vùng scan không còn detection NG nào trong nhiều frame liên
+        # tiếp mới gửi CLEAR xuống Arduino để mở khoá nút nhấn.
+        self._motor_locked = False
+        self._empty_ng_streak = 0
+        self._NG_CLEAR_DEBOUNCE_FRAMES = 10  # điều chỉnh theo tốc độ băng chuyền
 
         # ── Arduino (motor + còi) ────────────────────────────────────────────
         # arduino_status_var: hiển thị trạng thái kết nối lên Live Stats
@@ -632,6 +655,7 @@ class MainApp(ctk.CTk):
         self._device_var       = stat_row("Device:")
         self._conf_disp_var    = stat_row("Threshold:")
         self._arduino_stat_var = stat_row("Arduino:")
+        self._lock_stat_var    = stat_row("Khoá NG:")
 
         self._device_var.set(self._detector._device.upper())
         self._conf_disp_var.set(f"{self._config['confidence_threshold']:.0%}")
@@ -717,12 +741,36 @@ class MainApp(ctk.CTk):
                         continue
                     if det.get("status") == "NG" and tid not in self._ng_triggered:
                         self._ng_triggered.add(tid)
+                        self._motor_locked = True
+                        self._empty_ng_streak = 0
                         if self._arduino is not None and self._arduino.is_connected():
                             try:
                                 self._arduino.send_ng()
                                 logger.info(f"[Arduino] Gửi NG ngay cho track {tid}")
                             except Exception as e:
                                 logger.error(f"Lỗi gửi NG Arduino: {e}")
+
+                # ── Kiểm tra vùng scan còn tem NG nào không, để mở khoá ─────
+                # Chỉ gửi CLEAR khi KHÔNG có detection NG nào trong nhiều
+                # frame liên tiếp (debounce chống rung/miss-detect 1 frame).
+                # Đây là cơ chế bắt buộc "bóc hết tem NG mới cho chạy lại":
+                # nút vật lý trên Arduino sẽ TỪ CHỐI resume cho tới khi
+                # nhận được lệnh CLEAR này từ PC.
+                still_has_ng = any(d.get("status") == "NG" for d in last_detections)
+                if still_has_ng:
+                    self._empty_ng_streak = 0
+                else:
+                    self._empty_ng_streak += 1
+                    if (self._motor_locked
+                            and self._empty_ng_streak >= self._NG_CLEAR_DEBOUNCE_FRAMES):
+                        self._motor_locked = False
+                        self._ng_triggered.clear()
+                        if self._arduino is not None and self._arduino.is_connected():
+                            try:
+                                self._arduino.send_clear()
+                                logger.info("[Arduino] Đã gửi CLEAR — cho phép nhấn nút chạy lại")
+                            except Exception as e:
+                                logger.error(f"Lỗi gửi CLEAR Arduino: {e}")
 
                 self._qr_count = len(last_detections)
                 self._ok_count  = sum(1 for d in last_detections if d.get("status") == "OK")
@@ -811,6 +859,7 @@ class MainApp(ctk.CTk):
         self._cam_status_var.set(self._camera_status)
         self._model_status_var.set(self._model_status)
         self._arduino_stat_var.set(self._arduino_status_var.get())
+        self._lock_stat_var.set("🔒 Còn NG" if self._motor_locked else "🔓 OK")
         self.after(200, self._poll_stats)
 
     # ── Chụp ảnh train ────────────────────────────────────────────────────────
@@ -877,6 +926,7 @@ class MainApp(ctk.CTk):
         self._detector.update_threshold(new_config["confidence_threshold"])
         self._detector.update_imgsz(new_config.get("infer_imgsz", 320))
         self._skip_frames = new_config.get("skip_frames", 1)
+        self._tracker.update_min_hits(new_config.get("confirm_frames", 6))
         self._conf_disp_var.set(f"{new_config['confidence_threshold']:.0%}")
         self._result_logger.set_output_dir(new_config.get("result_dir", "results"))
         self._init_arduino()  # Reconnect nếu port / enabled thay đổi

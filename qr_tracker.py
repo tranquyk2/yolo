@@ -176,3 +176,10 @@ class QRTracker:
 
     def active_count(self) -> int:
         return len(self.tracks)
+
+    def update_min_hits(self, value: int):
+        """Đổi số hit tối thiểu cần để 1 track thoát trạng thái ô xám '...'
+        và chốt thành OK/NG. Chỉ áp dụng cho track MỚI được tạo sau lệnh
+        này — track đang active giữa chừng vẫn dùng giá trị cũ (an toàn
+        hơn, tránh 1 track đang đếm dở bị thay đổi ngưỡng đột ngột)."""
+        self.min_hits_to_finalize_ng = max(1, int(value))

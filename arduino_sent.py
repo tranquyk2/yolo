@@ -169,6 +169,13 @@ class ArduinoConnection:
         """Báo OK -> xóa cờ NG (không tự chạy lại motor)."""
         return self._send("OK")
 
+    def send_clear(self) -> bool:
+        """Báo cho Arduino biết camera KHÔNG còn thấy tem NG nào trong vùng
+        scan nữa -> mở khoá cho phép nhấn nút chạy lại motor.
+        Bắt buộc phải gửi lệnh này thì nút nhấn lần 2 trên Arduino mới
+        có tác dụng; nếu không, Arduino sẽ từ chối dù nhấn bao nhiêu lần."""
+        return self._send("CLEAR")
+
     def request_status(self) -> str | None:
         """Gửi lệnh STATUS và đọc phản hồi (nếu có)."""
         if not self._send("STATUS"):

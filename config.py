@@ -12,6 +12,8 @@ DEFAULT_CONFIG = {
     "result_dir": "results",
     "arduino_enabled": True,   # Bật/tắt gửi lệnh xuống Arduino
     "arduino_port": "",        # Rỗng = tự động dò theo VID/PID
+    "confirm_frames": 6,       # Số hit liên tiếp cần để ô xám "..." chốt thành OK/NG
+                                # (số càng lớn = QR phải đi qua vùng scan lâu hơn mới bắt)
 }
 
 
