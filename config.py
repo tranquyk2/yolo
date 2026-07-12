@@ -12,8 +12,15 @@ DEFAULT_CONFIG = {
     "result_dir": "results",
     "arduino_enabled": True,   # Bật/tắt gửi lệnh xuống Arduino
     "arduino_port": "",        # Rỗng = tự động dò theo VID/PID
-    "confirm_frames": 6,       # Số hit liên tiếp cần để ô xám "..." chốt thành OK/NG
-                                # (số càng lớn = QR phải đi qua vùng scan lâu hơn mới bắt)
+    "confirm_distance_px": 150,  # Quãng đường (px) QR phải di chuyển được
+                                  # trước khi ô xám "..." chốt thành NG.
+                                  # Đo bằng khoảng cách thực tế trên khung
+                                  # hình (không phải số frame) nên TỰ ĐỘNG
+                                  # thích nghi khi tốc độ băng chuyền đổi
+                                  # (ví dụ cuộn tem to dần lên) — không cần
+                                  # chỉnh tay lại. OK vẫn chốt ngay khi
+                                  # decode thành công lần đầu, không bị
+                                  # ảnh hưởng bởi giá trị này.
 }
 
 

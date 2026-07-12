@@ -25,7 +25,8 @@ def _center_dist(tr_box: Dict, dcx: float, dcy: float) -> float:
 
 
 class Track:
-    def __init__(self, track_id: int, det: Dict[str, Any], min_hits: int = 8):
+    def __init__(self, track_id: int, det: Dict[str, Any],
+                 confirm_distance_px: float = 150.0, min_hits_floor: int = 2):
         self.id = track_id
         self.x1 = det["x1"]
         self.y1 = det["y1"]
@@ -33,10 +34,21 @@ class Track:
         self.y2 = det["y2"]
         self.misses = 0
         self.hit_count = 1
-        self.min_hits = min_hits
+        # Quãng đường (px) cần đi được trước khi "chốt" NG — TỰ ĐỘNG thích
+        # nghi với tốc độ băng chuyền: băng nhanh -> QR di chuyển nhiều px
+        # mỗi lần detect -> đủ quãng đường sau ít lần hit hơn. Băng chậm ->
+        # ngược lại, tự động cần nhiều lần hit hơn. Không cần chỉnh tay khi
+        # tốc độ đổi (ví dụ cuộn tem to dần lên).
+        self.confirm_distance_px = confirm_distance_px
+        # Số hit tối thiểu để chặn trường hợp 1-2 frame nhiễu/jump lớn do
+        # distance-fallback matching bị tính nhầm là "đã đi đủ xa".
+        self.min_hits_floor = min_hits_floor
         self.ever_ok = (det.get("status") == "OK")
         self.best_text = det.get("text", "") if self.ever_ok else ""
         self.first_seen = time.time()
+        # Vị trí tâm box lúc mới xuất hiện — dùng để đo quãng đường đã đi
+        self.first_cx = (self.x1 + self.x2) / 2
+        self.first_cy = (self.y1 + self.y2) / 2
 
     def as_box(self) -> Dict:
         return {"x1": self.x1, "y1": self.y1, "x2": self.x2, "y2": self.y2}
@@ -49,6 +61,11 @@ class Track:
     def cy(self) -> float:
         return (self.y1 + self.y2) / 2
 
+    @property
+    def travel_distance(self) -> float:
+        """Quãng đường (px) đã di chuyển kể từ lúc track được tạo."""
+        return math.hypot(self.cx - self.first_cx, self.cy - self.first_cy)
+
     def update(self, det: Dict[str, Any]):
         self.x1, self.y1, self.x2, self.y2 = det["x1"], det["y1"], det["x2"], det["y2"]
         self.misses = 0
@@ -59,7 +76,11 @@ class Track:
 
     @property
     def is_mature(self) -> bool:
-        return self.hit_count >= self.min_hits
+        """Track được coi là 'đã đủ tin cậy' khi vừa đủ số hit tối thiểu
+        (chống nhiễu 1 frame), VỪA đã di chuyển đủ quãng đường yêu cầu
+        (tự động thích nghi tốc độ băng chuyền thực tế)."""
+        return (self.hit_count >= self.min_hits_floor
+                and self.travel_distance >= self.confirm_distance_px)
 
     @property
     def status(self) -> str:
@@ -79,7 +100,8 @@ class QRTracker:
         self,
         min_iou: float = 0.15,
         max_misses: int = 15,
-        min_hits_to_finalize_ng: int = 8,
+        confirm_distance_px: float = 150.0,
+        min_hits_floor: int = 2,
         on_finalize: Optional[Callable[["Track"], None]] = None,
         max_center_dist: float = 200.0,
         max_distance: float = 0,
@@ -87,7 +109,8 @@ class QRTracker:
         self.min_iou = min_iou
         self.max_center_dist = max_center_dist
         self.max_misses = max_misses
-        self.min_hits_to_finalize_ng = min_hits_to_finalize_ng
+        self.confirm_distance_px = confirm_distance_px
+        self.min_hits_floor = min_hits_floor
         self.on_finalize = on_finalize
         self.tracks: Dict[int, Track] = {}
         self._next_id = 1
@@ -148,7 +171,7 @@ class QRTracker:
             else:
                 tid = self._next_id
                 self._next_id += 1
-                self.tracks[tid] = Track(tid, det, self.min_hits_to_finalize_ng)
+                self.tracks[tid] = Track(tid, det, self.confirm_distance_px, self.min_hits_floor)
 
             matched_track_ids.add(tid)
             tr = self.tracks[tid]
@@ -177,9 +200,10 @@ class QRTracker:
     def active_count(self) -> int:
         return len(self.tracks)
 
-    def update_min_hits(self, value: int):
-        """Đổi số hit tối thiểu cần để 1 track thoát trạng thái ô xám '...'
-        và chốt thành OK/NG. Chỉ áp dụng cho track MỚI được tạo sau lệnh
-        này — track đang active giữa chừng vẫn dùng giá trị cũ (an toàn
-        hơn, tránh 1 track đang đếm dở bị thay đổi ngưỡng đột ngột)."""
-        self.min_hits_to_finalize_ng = max(1, int(value))
+    def update_confirm_distance(self, value: float):
+        """Đổi quãng đường (px) cần đi được trước khi 1 track thoát trạng
+        thái ô xám '...' và chốt thành NG (OK vẫn chốt ngay khi decode
+        thành công lần đầu, không phụ thuộc giá trị này).
+        Chỉ áp dụng cho track MỚI được tạo sau lệnh này — track đang
+        active giữa chừng vẫn dùng giá trị cũ """
+        self.confirm_distance_px = max(1.0, float(value))

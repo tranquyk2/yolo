@@ -319,18 +319,18 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkButton(result_row, text="Browse…", width=72,
                       command=self._browse_result_dir).pack(side="left", padx=6)
 
-        # ── Tốc độ ô xám (số frame cần để chốt OK/NG) ──────────────────────
-        ctk.CTkLabel(form, text="Độ trễ xác nhận:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
-        self._confirm_frames_var = ctk.IntVar(value=self._config.get("confirm_frames", 6))
+        # ── Quãng đường xác nhận (px) — TỰ ĐỘNG thích nghi tốc độ băng chuyền ──
+        ctk.CTkLabel(form, text="Quãng đường xác nhận:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
+        self._confirm_distance_var = ctk.IntVar(value=self._config.get("confirm_distance_px", 150))
         confirm_row = ctk.CTkFrame(form, fg_color="transparent")
         confirm_row.grid(row=6, column=1, padx=10, sticky="ew")
-        ctk.CTkSlider(confirm_row, from_=2, to=30, number_of_steps=28,
-                      variable=self._confirm_frames_var, width=160).pack(side="left")
-        self._confirm_frames_disp = ctk.CTkLabel(confirm_row, text=str(self._confirm_frames_var.get()), width=28)
-        self._confirm_frames_disp.pack(side="left", padx=6)
-        self._confirm_frames_var.trace_add("write", lambda *_: self._confirm_frames_disp.configure(
-            text=str(self._confirm_frames_var.get())))
-        ctk.CTkLabel(form, text="(số lớn = ô xám giữ lâu hơn, QR phải đi qua\nvùng scan lâu hơn mới chốt OK/NG)",
+        ctk.CTkSlider(confirm_row, from_=20, to=500, number_of_steps=48,
+                      variable=self._confirm_distance_var, width=160).pack(side="left")
+        self._confirm_distance_disp = ctk.CTkLabel(confirm_row, text=f"{self._confirm_distance_var.get()}px", width=40)
+        self._confirm_distance_disp.pack(side="left", padx=6)
+        self._confirm_distance_var.trace_add("write", lambda *_: self._confirm_distance_disp.configure(
+            text=f"{self._confirm_distance_var.get()}px"))
+        ctk.CTkLabel(form, text="(đo bằng khoảng cách QR di chuyển trong khung hình,\nKHÔNG phải số frame — tự động thích nghi khi tốc độ\nbăng chuyền đổi, ví dụ cuộn tem to dần lên, không\ncần chỉnh tay lại)",
                      text_color="#666666", font=("Arial", 10), justify="left").grid(
             row=7, column=1, padx=10, sticky="w")
 
@@ -423,7 +423,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self._config["infer_imgsz"] = int(self._imgsz_var.get())
         self._config["model_path"] = self._model_var.get()
         self._config["result_dir"] = self._result_dir_var.get()
-        self._config["confirm_frames"] = int(self._confirm_frames_var.get())
+        self._config["confirm_distance_px"] = int(self._confirm_distance_var.get())
         self._config["arduino_enabled"] = self._arduino_enabled_var.get()
         selected_port = self._arduino_port_var.get()
         self._config["arduino_port"] = "" if selected_port == "Tự động dò" else selected_port
@@ -457,10 +457,11 @@ class MainApp(ctk.CTk):
         self._result_logger = ResultLogger(
             output_dir=self._config.get("result_dir", "results"))
 
-        # Tracker v3: IoU matching + mature-zone guard
+        # Tracker v6: IoU matching + distance-fallback + tự động thích nghi
+        # tốc độ băng chuyền (chốt NG theo quãng đường px, không theo số frame)
         self._tracker = QRTracker(
             max_misses=15,
-            min_hits_to_finalize_ng=self._config.get("confirm_frames", 6),
+            confirm_distance_px=self._config.get("confirm_distance_px", 150),
             on_finalize=self._on_item_finalized,
         )
         # Cache track đã confirmed OK → tránh NG flash do 1 frame mờ
@@ -926,7 +927,7 @@ class MainApp(ctk.CTk):
         self._detector.update_threshold(new_config["confidence_threshold"])
         self._detector.update_imgsz(new_config.get("infer_imgsz", 320))
         self._skip_frames = new_config.get("skip_frames", 1)
-        self._tracker.update_min_hits(new_config.get("confirm_frames", 6))
+        self._tracker.update_confirm_distance(new_config.get("confirm_distance_px", 150))
         self._conf_disp_var.set(f"{new_config['confidence_threshold']:.0%}")
         self._result_logger.set_output_dir(new_config.get("result_dir", "results"))
         self._init_arduino()  # Reconnect nếu port / enabled thay đổi
